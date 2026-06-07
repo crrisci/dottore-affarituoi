@@ -1,7 +1,7 @@
 # 🎯 Il Dottore sotto esame — Machine Learning applicato ad *Affari Tuoi*
 
 > Progetto per il corso di **Elementi di Intelligenza Artificiale**  
-> Università degli Studi di Napoli Federico II — A.A. 2023/2024  
+> Università degli Studi di Napoli Federico II — A.A. 2025/2026  
 > Prof. Giancarlo Sperlì
 
 ---
