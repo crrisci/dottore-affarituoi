@@ -123,7 +123,9 @@ print(f"Offerte estratte: {df.shape[0]}")
 print(f"Feature disponibili: {df.shape[1]}")
 print(f"Valori nulli: {df.isnull().sum().sum()}")
 
-# Il CSV per KNIME viene salvato dopo il pre-processing (include classe_offerta)
+# Salva il dataset grezzo per KNIME
+df.to_csv("output/dataset_offerte.csv", index=False)
+print("-> Salvato: output/dataset_offerte.csv")
 
 # ==============================================================
 # 2. PRE-PROCESSING
@@ -153,9 +155,6 @@ print(f"Soglie: ratio < {SOGLIA_BASSA} -> Bassa | {SOGLIA_BASSA}-{SOGLIA_ALTA} -
 print(f"\nDistribuzione classi:\n{df['classe_offerta'].value_counts()}")
 print(f"\nDistribuzione percentuale:")
 print((df['classe_offerta'].value_counts(normalize=True) * 100).round(1).to_string())
-# Salva il dataset per KNIME (con classe_offerta inclusa)
-df.to_csv("output/dataset_offerte.csv", index=False)
-print("-> Salvato: output/dataset_offerte.csv")
 
 # Encoding del target: Alta=0, Bassa=1, Media=2 (ordine alfabetico LabelEncoder)
 le = LabelEncoder()
@@ -424,6 +423,151 @@ for _, row in df_test[(df_test["reale_classe"]=="Alta") & df_test["corretta"]].h
     print(f"  {row['data']} | Turno {int(row['num_offerta'])} | VA: EUR{row['valore_atteso']:,.0f} "
           f"| Offerta: EUR{int(row['val_offerta']):,} "
           f"| Ratio: {row['ratio_offerta_va']:.2f}")
+
+print("\n" + "=" * 60)
+print("8. REGRESSIONE - stima dell'offerta in euro")
+print("=" * 60)
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+# Target continuo: il ratio offerta/valore atteso
+y_reg = df["ratio_offerta_va"].copy()
+
+# Stessi split con stesso seed -> stessi indici di train/test
+X_train_r, X_test_r, y_train_r, y_test_r = train_test_split(
+    X, y_reg, test_size=0.25, random_state=SEED
+)
+
+# Pipeline regressione
+reg_pipeline = make_pipeline(
+    MinMaxScaler(),
+    RandomForestRegressor(n_estimators=100, random_state=SEED)
+)
+
+# Cross-validation su MAE
+from sklearn.model_selection import cross_val_score
+cv_mae = cross_val_score(reg_pipeline, X_train_r, y_train_r,
+                          cv=KFold(n_splits=10, shuffle=True, random_state=SEED),
+                          scoring="neg_mean_absolute_error")
+print(f"Cross-validation MAE (ratio): {(-cv_mae.mean()):.4f} ± {cv_mae.std():.4f}")
+
+# Addestramento e predizione
+reg_pipeline.fit(X_train_r, y_train_r)
+y_pred_ratio = reg_pipeline.predict(X_test_r)
+
+# Metriche sul ratio
+mae  = mean_absolute_error(y_test_r, y_pred_ratio)
+rmse = mean_squared_error(y_test_r, y_pred_ratio) ** 0.5
+r2   = r2_score(y_test_r, y_pred_ratio)
+
+print(f"\nMetriche sul ratio predetto (test set):")
+print(f"  MAE  (ratio): {mae:.4f}  → in media ±{mae*100:.1f}% dal ratio reale")
+print(f"  RMSE (ratio): {rmse:.4f}")
+print(f"  R²:           {r2:.4f}")
+
+# Conversione in euro: offerta_stimata = ratio_predetto * valore_atteso
+df_reg = df.iloc[X_test_r.index].copy()
+df_reg["ratio_predetto"]   = y_pred_ratio
+df_reg["offerta_stimata"]  = (df_reg["ratio_predetto"] * df_reg["valore_atteso"]).round(0)
+df_reg["errore_euro"]      = (df_reg["offerta_stimata"] - df_reg["val_offerta"]).round(0)
+df_reg["errore_abs_euro"]  = df_reg["errore_euro"].abs()
+
+mae_euro  = df_reg["errore_abs_euro"].mean()
+rmse_euro = (df_reg["errore_euro"]**2).mean()**0.5
+
+print(f"\nMetriche sull'offerta stimata in euro:")
+print(f"  MAE  (euro): EUR{mae_euro:,.0f}  → errore medio assoluto")
+print(f"  RMSE (euro): EUR{rmse_euro:,.0f}")
+
+# Salva risultati regressione
+df_reg[["data","num_offerta","valore_atteso","val_offerta",
+        "ratio_offerta_va","ratio_predetto",
+        "offerta_stimata","errore_euro"]].to_csv(
+    "output/risultati_regressione.csv", index=False)
+print("-> Salvato: output/risultati_regressione.csv")
+
+# Grafico: offerta reale vs offerta stimata
+fig, ax = plt.subplots(figsize=(7, 5))
+ax.scatter(df_reg["val_offerta"], df_reg["offerta_stimata"],
+           alpha=0.6, color="#1D9E75", edgecolors="white", linewidth=0.5, s=50)
+lim = max(df_reg["val_offerta"].max(), df_reg["offerta_stimata"].max()) * 1.05
+ax.plot([0, lim], [0, lim], "--", color="#E24B4A", linewidth=1.2, label="Predizione perfetta")
+ax.set_xlabel("Offerta reale del Dottore (€)")
+ax.set_ylabel("Offerta stimata dal modello (€)")
+ax.set_title("Regressione: offerta reale vs offerta stimata")
+ax.legend()
+ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+ax.set_axisbelow(True)
+# Formatta assi in migliaia
+ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"€{x/1000:.0f}k"))
+ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"€{x/1000:.0f}k"))
+plt.tight_layout()
+plt.savefig("output/regressione_scatter.png", dpi=150, bbox_inches="tight")
+plt.close()
+print("-> Salvato: output/regressione_scatter.png")
+
+# Grafico: distribuzione errori in euro
+fig, ax = plt.subplots(figsize=(7, 4))
+ax.hist(df_reg["errore_euro"], bins=25, color="#378ADD",
+        edgecolor="white", linewidth=0.5)
+ax.axvline(0, color="#E24B4A", linestyle="--", linewidth=1.2, label="Errore zero")
+ax.axvline(mae_euro, color="#BA7517", linestyle="--", linewidth=1,
+           label=f"MAE = €{mae_euro:,.0f}")
+ax.axvline(-mae_euro, color="#BA7517", linestyle="--", linewidth=1)
+ax.set_xlabel("Errore (offerta stimata − offerta reale) in €")
+ax.set_ylabel("Frequenza")
+ax.set_title("Distribuzione degli errori di stima in euro")
+ax.legend()
+ax.yaxis.grid(True, linestyle="--", alpha=0.4)
+ax.set_axisbelow(True)
+plt.tight_layout()
+plt.savefig("output/regressione_errori.png", dpi=150, bbox_inches="tight")
+plt.close()
+print("-> Salvato: output/regressione_errori.png")
+
+# Esempi narrativi: casi più accurati
+print(f"\nI 5 casi in cui il modello ha stimato meglio l'offerta:")
+for _, row in df_reg.nsmallest(5, "errore_abs_euro").iterrows():
+    print(f"  {row['data']} | Turno {int(row['num_offerta'])} "
+          f"| VA: EUR{row['valore_atteso']:,.0f} "
+          f"| Reale: EUR{int(row['val_offerta']):,} "
+          f"| Stimata: EUR{int(row['offerta_stimata']):,} "
+          f"| Errore: EUR{int(row['errore_euro']):+,}")
+
+print(f"\nI 3 casi con errore maggiore:")
+for _, row in df_reg.nlargest(3, "errore_abs_euro").iterrows():
+    print(f"  {row['data']} | Turno {int(row['num_offerta'])} "
+          f"| VA: EUR{row['valore_atteso']:,.0f} "
+          f"| Reale: EUR{int(row['val_offerta']):,} "
+          f"| Stimata: EUR{int(row['offerta_stimata']):,} "
+          f"| Errore: EUR{int(row['errore_euro']):+,}")
+
+# ==============================================================
+# 9. SALVATAGGIO DEL MODELLO PER IL GIOCO
+# ==============================================================
+
+print("\n" + "=" * 60)
+print("9. SALVATAGGIO MODELLO PER IL GIOCO")
+print("=" * 60)
+
+import joblib
+import os
+
+os.makedirs("../game", exist_ok=True)
+
+# Salviamo il regressore addestrato su TUTTI i dati (non solo train)
+reg_finale = make_pipeline(
+    MinMaxScaler(),
+    RandomForestRegressor(n_estimators=100, random_state=SEED)
+)
+reg_finale.fit(X, y_reg)   # addestrato su tutto il dataset
+joblib.dump(reg_finale, "../game/modello_dottore.pkl")
+print("-> Salvato: ../game/modello_dottore.pkl")
+
+# Salviamo anche la lista delle feature nell'ordine giusto
+joblib.dump(FEATURE_COLS, "../game/feature_cols.pkl")
+print("-> Salvato: ../game/feature_cols.pkl")
 
 print("\n" + "=" * 60)
 print("Script completato. File salvati nella cartella output/")

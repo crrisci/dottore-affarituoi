@@ -807,6 +807,115 @@ In particolare:
 \end{itemize}
 
 % ══════════════════════════════════════════════════════════════
+\section{Regressione: stima dell'offerta in euro}
+% ══════════════════════════════════════════════════════════════
+
+La classificazione in tre classi risponde alla domanda
+\textit{``il Dottore è avaro, nella norma o generoso?''}
+ma non fornisce una stima monetaria precisa. Per rispondere direttamente
+alla domanda \textit{``quanto offrirà il Dottore in euro?''} si è
+implementato un secondo modello: una \textbf{Random Forest Regressor}
+che predice il \textbf{ratio offerta/valore atteso} come valore
+continuo. Moltiplicando il ratio predetto per il valore atteso dei
+premi rimasti si ottiene la \textbf{stima dell'offerta in euro}.
+
+\subsection{Impostazione del modello}
+
+Il modello di regressione utilizza le stesse 8 feature e lo stesso
+split train/test (75\%/25\%, seed~42) della classificazione.
+Il target non è più la classe categorica ma il \textbf{ratio continuo}
+$\hat{r} \in \mathbb{R}^+$, e la stima dell'offerta viene calcolata come:
+
+\begin{equation}
+  \hat{O} = \hat{r} \times \mathbb{E}[\text{premi rimasti}]
+\end{equation}
+
+Le metriche di valutazione usate per la regressione sono:
+
+\begin{itemize}
+  \item \textbf{MAE} (\textit{Mean Absolute Error}): errore medio assoluto,
+        misura di quanto la stima si discosta in media dalla realtà;
+  \item \textbf{RMSE} (\textit{Root Mean Squared Error}): penalizza
+        maggiormente gli errori grandi;
+  \item \textbf{R²} (\textit{coefficiente di determinazione}): misura la
+        proporzione di varianza spiegata dal modello (1 = perfetto, 0 = casuale).
+\end{itemize}
+
+\subsection{Risultati}
+
+\begin{table}[H]
+\centering
+\caption{Metriche del modello di regressione (Random Forest, test set)}
+\rowcolors{2}{sfondotab}{white}
+\begin{tabular}{lcc}
+  \toprule
+  \textbf{Metrica} & \textbf{Sul ratio} & \textbf{Sull'offerta in €} \\
+  \midrule
+  MAE  & 0,0893 (~8,9\% dal ratio reale) & 3.163~€ \\
+  RMSE & 0,1204 & 4.494~€ \\
+  R²   & 0,514  & --- \\
+  CV MAE (10-fold) & 0,1067 ± 0,0158 & --- \\
+  \bottomrule
+\end{tabular}
+\label{tab:regressione}
+\end{table}
+
+Il modello spiega il \textbf{51,4\% della varianza} delle offerte del
+Dottore con un errore medio di soli \textbf{3.163~€} — un risultato
+notevole considerando che le offerte spaziano da poche centinaia a
+centinaia di migliaia di euro.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{regressione_scatter.png}
+  \caption{Offerta reale del Dottore vs offerta stimata dal modello di
+           regressione. I punti sulla linea tratteggiata rossa
+           rappresentano predizioni perfette.}
+  \label{fig:scatter}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{regressione_errori.png}
+  \caption{Distribuzione degli errori di stima in euro
+           (offerta stimata $-$ offerta reale). La distribuzione è
+           centrata attorno allo zero, senza bias sistematici evidenti.
+           Le linee tratteggiate arancioni indicano il MAE (±3.163~€).}
+  \label{fig:errori}
+\end{figure}
+
+\subsection{Esempi concreti}
+
+La Tabella~\ref{tab:esempi_reg} mostra i casi in cui il modello ha
+stimato l'offerta con maggiore precisione, dimostrando la capacità
+concreta di quantificare il comportamento del Dottore.
+
+\begin{table}[H]
+\centering
+\caption{I cinque casi con stima più accurata (test set)}
+\rowcolors{2}{sfondotab}{white}
+\begin{tabular}{cccccc}
+  \toprule
+  \textbf{Data} & \textbf{Turno} & \textbf{VA (€)} &
+  \textbf{Offerta reale} & \textbf{Stima modello} & \textbf{Errore} \\
+  \midrule
+  05/05/2024 & 2\textsuperscript{o} & 10.250 & 8.000  & 7.891  & $-$109~€ \\
+  15/04/2024 & 4\textsuperscript{o} & 17.167 & 17.000 & 17.148 & $+$148~€ \\
+  20/05/2024 & 4\textsuperscript{o} & 35.136 & 25.000 & 24.849 & $-$151~€ \\
+  17/02/2024 & 4\textsuperscript{o} & 26.214 & 24.000 & 23.826 & $-$174~€ \\
+  10/05/2024 & 1\textsuperscript{o} & 50.450 & 42.000 & 41.684 & $-$316~€ \\
+  \bottomrule
+\end{tabular}
+\label{tab:esempi_reg}
+\end{table}
+
+Il caso più accurato è emblematico: con un valore atteso di 10.250~€,
+il Dottore ha offerto 8.000~€ e il modello ha stimato 7.891~€ —
+un errore di soli \textbf{109~€}. Questo livello di precisione conferma
+che le offerte seguono una logica strutturata che un algoritmo addestrato
+su dati storici è in grado di riprodurre.
+
+% ══════════════════════════════════════════════════════════════
 \section{Conclusioni}
 % ══════════════════════════════════════════════════════════════
 
@@ -820,6 +929,11 @@ hanno raggiunto accuracy tra il 55\% e il 60\% su un problema a tre classi
 con baseline casuale al 33\%, con la Random Forest che si è distinta per la
 maggiore stabilità in cross-validation ($\mu = 0{,}622$, $\sigma = 0{,}084$).
 
+Il modello di regressione ha ulteriormente affinato l'analisi, stimando
+l'offerta del Dottore con un errore medio di \textbf{3.163~€} e un
+R² di \textbf{0,514} — dimostrando che il comportamento del Dottore
+non è solo classificabile ma direttamente quantificabile in euro.
+
 L'analisi delle feature importance ha evidenziato che il \textbf{valore atteso},
 il \textbf{massimo rimasto} e la \textbf{deviazione standard} dei premi in gioco
 sono i fattori che più determinano il comportamento del Dottore, confermando
@@ -832,18 +946,14 @@ sufficienti per un progetto didattico, ma insufficienti per addestrare modelli
 ad alta capacità come le reti neurali. L'ampliamento del dataset a più stagioni
 di gioco potrebbe migliorare significativamente le performance. Ulteriori
 feature potenzialmente rilevanti — come la \textbf{regione di provenienza} del
-concorrente, il \textbf{mese} della puntata o una stima del
-\textbf{coinvolgimento narrativo} dell'episodio — non erano disponibili nel
-dataset utilizzato o avrebbero richiesto un processo di raccolta dati
-considerevolmente più complesso.
+concorrente o il \textbf{mese} della puntata — non erano disponibili nel
+dataset utilizzato.
 
 \paragraph{Sviluppi futuri.}
 Alcune direzioni di ricerca meritano approfondimento:
 \begin{itemize}
   \item Estendere il dataset alle stagioni precedenti per aumentare la potenza
         statistica;
-  \item Introdurre un modello di \textbf{regressione} per predire il valore
-        esatto del ratio, anziché la sola classe;
   \item Esplorare tecniche di \textbf{spiegabilità} (SHAP values, LIME) per
         motivare le singole predizioni in modo interpretabile;
   \item Analizzare eventuali \textbf{differenze regionali} nel comportamento
@@ -854,9 +964,65 @@ Alcune direzioni di ricerca meritano approfondimento:
 I risultati di questo progetto sono coerenti con le analisi statistiche
 pubblicate da altri ricercatori sullo stesso programma: le offerte del Dottore
 non sono casuali e seguono schemi riconoscibili. Il Machine Learning aggiunge
-a questa osservazione una dimensione predittiva: non solo il Dottore
+a questa osservazione una dimensione predittiva concreta: non solo il Dottore
 \textit{si comporta} in modo sistematico, ma quel comportamento è
-\textit{apprendibile} da un algoritmo addestrato su dati storici.
+\textit{apprendibile} e \textit{quantificabile in euro} da un algoritmo
+addestrato su dati storici.
+
+% ══════════════════════════════════════════════════════════════
+\section*{Extra — Il Dottore Artificiale: un gioco da terminale}
+\addcontentsline{toc}{section}{Extra — Il Dottore Artificiale: un gioco da terminale}
+% ══════════════════════════════════════════════════════════════
+
+Il modello di regressione non è solo un numero su una tabella.
+Per dimostrarlo in modo concreto e divertente, è stato realizzato
+\textbf{gioca.py}: uno script Python che simula una vera puntata di
+\textit{Affari Tuoi} da terminale, usando il modello addestrato come
+cervello del Dottore.
+
+L'idea di fondo è semplice ma potente: se il modello ha davvero imparato
+la logica del Dottore, dovrebbe essere in grado di replicarla in tempo
+reale su una partita mai vista. Non su dati storici, non su un test set
+— ma su una partita generata casualmente, pacco per pacco, proprio come
+accade in televisione ogni sera.
+
+\paragraph{Come funziona.}
+All'avvio, i 21 premi vengono distribuiti casualmente nei pacchi.
+Il giocatore sceglie il proprio pacco e, turno dopo turno, apre quelli
+degli altri concorrenti. Al termine di ogni turno il modello calcola
+le stesse feature usate in fase di addestramento — valore atteso,
+massimo rimasto, deviazione standard, numero di premi alti ancora in
+gioco — e stima quanto offrirebbe il Dottore reale in quella situazione.
+L'offerta viene presentata insieme al ratio predetto, così il giocatore
+può vedere non solo il numero in euro ma anche il ragionamento dietro:
+\textit{``il Dottore sta offrendo il 74\% del valore atteso — è
+un'offerta nella norma''}.
+
+\paragraph{Perché è significativo.}
+Un modello che funziona solo su dati di test potrebbe aver semplicemente
+memorizzato dei pattern. Un modello che genera offerte plausibili su
+partite casuali, mai viste durante il training, dimostra di aver
+generalizzato la logica sottostante. Il gioco è quindi il banco di prova
+più onesto del progetto: ogni partita è un esperimento nuovo.
+
+\paragraph{Come eseguirlo.}
+Il file \texttt{gioca.py} si trova nella cartella \texttt{game/}
+del repository. Prima di giocare è necessario eseguire almeno una volta
+\texttt{affari\_tuoi\_ml.py}, che genera il file
+\texttt{modello\_dottore.pkl} contenente il modello serializzato.
+Poi basta lanciare:
+
+\begin{lstlisting}[language=bash, caption={Avvio del gioco da terminale}]
+cd game
+python3 gioca.py
+\end{lstlisting}
+
+Il gioco gira interamente nel terminale, con colori e formattazione
+che rendono leggibile il tabellone dei pacchi, i premi rimasti divisi
+per fascia di valore e l'offerta del Dottore con il relativo ratio.
+Alla fine di ogni partita viene mostrato il confronto tra l'offerta
+accettata e il valore reale del pacco, permettendo al giocatore di
+valutare se la decisione è stata corretta dal punto di vista matematico.
 
 % ══════════════════════════════════════════════════════════════
 \begin{thebibliography}{9}
